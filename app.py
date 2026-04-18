@@ -7,6 +7,7 @@ import json
 from databricks import sql
 import pytz
 import datetime
+import threading
 
 app = Flask(__name__)
 
@@ -81,7 +82,7 @@ def get_embedding(image_bytes):
     files = {"file": ("img.jpg", image_bytes, "image/jpeg")}
 
     try:
-        res = requests.post(AI_URL, files=files, timeout=3)
+        res = requests.post(AI_URL, files=files, timeout=2)
 
         if res.status_code == 200:
             return res.json().get("embedding")
@@ -121,6 +122,23 @@ def match_face(emb):
         return best_name
 
     return "Unknown"
+
+def log_async(name):
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+
+        now = get_time_vn().strftime("%Y-%m-%d %H:%M:%S")
+
+        cur.execute(
+            "INSERT INTO face_db.logs VALUES (?, ?)",
+            (name, now)
+        )
+
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print("LOG ERROR:", e)
 
 # ================= REGISTER =================
 @app.route("/register", methods=["POST"])
@@ -176,23 +194,8 @@ def recognize_image():
 
     name = match_face(emb)
 
-    # log nhưng KHÔNG để crash
     if name != "Unknown":
-        try:
-            conn = get_conn()
-            cur = conn.cursor()
-
-            now = get_time_vn().strftime("%Y-%m-%d %H:%M:%S")
-
-            cur.execute(
-                "INSERT INTO face_db.logs VALUES (?, ?)",
-                (name, now)
-            )
-
-            cur.close()
-            conn.close()
-        except:
-            pass
+        threading.Thread(target=log_async, args=(name,)).start()
 
     return name   # KHÔNG JSON
 
