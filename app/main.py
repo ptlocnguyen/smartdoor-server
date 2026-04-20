@@ -4,8 +4,17 @@ from app.db import get_connection
 from app.fingerprint import sync_fingerprint
 import uuid
 import numpy as np
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ================= USER =================
 @app.post("/users/create")
