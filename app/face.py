@@ -17,7 +17,6 @@ def cosine(a, b):
     a = np.array(a, dtype=np.float32)
     b = np.array(b, dtype=np.float32)
 
-    # CHẶN LỖI DIMENSION
     if len(a) != 512 or len(b) != 512:
         return 0.0
 
@@ -27,33 +26,35 @@ def cosine(a, b):
     return float(np.dot(a, b))
 
 
-# ===== FIX CHÍNH Ở ĐÂY =====
+# ===== FIX EMBEDDING =====
 def get_embedding(file_bytes):
     try:
         res = requests.post(
             API_URL,
             files={
-                "file": ("image.jpg", file_bytes, "image/jpeg")  # QUAN TRỌNG
+                "file": ("image.jpg", file_bytes, "image/jpeg")
             },
             timeout=10
         )
 
-        print("API RESPONSE:", res.text)
-
         if res.status_code != 200:
+            print("API ERROR:", res.text)
             return None
 
         data = res.json()
 
         if "embedding" not in data:
-            print("NO EMBEDDING FIELD")
+            print("NO EMBEDDING FIELD:", data)
             return None
 
         emb = data["embedding"]
 
-        # VALIDATE CHẶT
-        if not emb or len(emb) != 512:
-            print("INVALID EMBEDDING:", emb)
+        if not emb:
+            print("EMPTY EMBEDDING")
+            return None
+
+        if len(emb) != 512:
+            print("WRONG DIM:", len(emb))
             return None
 
         return emb
@@ -78,9 +79,15 @@ def recognize_face(file_bytes):
         for row in cursor.fetchall():
             db_emb = row[1]
 
-            # BỎ QUA DATA LỖI
-            if not db_emb or len(db_emb) != 512:
-                print("SKIP INVALID DB EMB:", row[0])
+            if db_emb is None:
+                continue
+
+            try:
+                db_emb = list(db_emb)
+            except:
+                continue
+
+            if len(db_emb) != 512:
                 continue
 
             score = cosine(emb, db_emb)
