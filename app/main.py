@@ -15,6 +15,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # ===== USER =====
 @app.post("/users/create")
 def create_user(name: str, phone: str = "", role: str = "user"):
@@ -39,13 +40,12 @@ def get_users():
         return [{"user_id": r[0], "name": r[1]} for r in cursor.fetchall()]
 
 
-# ===== REGISTER FACE (FIX LỖI CHÍNH) =====
+# ===== REGISTER FACE =====
 @app.post("/face/register")
 async def register_face(user_id: str, file: UploadFile = File(...)):
     file_bytes = await file.read()
     emb = get_embedding(file_bytes)
 
-    # CHẶN TRIỆT ĐỂ
     if emb is None:
         return {"error": "Embedding failed"}
 
@@ -63,7 +63,7 @@ async def register_face(user_id: str, file: UploadFile = File(...)):
             (sample_id, user_id, emb)
         )
 
-        # ===== UPDATE AVG =====
+        # ===== LOAD ALL EMBEDDING =====
         cursor.execute(
             "SELECT embedding FROM face_samples WHERE user_id = ?",
             (user_id,)
@@ -71,13 +71,23 @@ async def register_face(user_id: str, file: UploadFile = File(...)):
 
         rows = cursor.fetchall()
 
-        # lọc embedding lỗi
-        valid = [
-            r[0] for r in rows
-            if r[0] is not None and hasattr(r[0], "__len__") and len(r[0]) == 512
-        ]
+        valid = []
 
-        if not valid:
+        for r in rows:
+            emb_db = r[0]
+
+            if emb_db is None:
+                continue
+
+            try:
+                emb_list = list(emb_db)
+            except:
+                continue
+
+            if len(emb_list) == 512:
+                valid.append(emb_list)
+
+        if len(valid) == 0:
             return {"error": "No valid embedding"}
 
         avg = np.mean(valid, axis=0).tolist()
