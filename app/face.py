@@ -8,15 +8,10 @@ API_URL = os.getenv("AI_URL")
 def normalize(v):
     v = np.array(v, dtype=np.float32)
     norm = np.linalg.norm(v)
-    if norm == 0:
-        return v
-    return v / norm
+    return v if norm == 0 else v / norm
 
 
 def cosine(a, b):
-    a = np.array(a, dtype=np.float32)
-    b = np.array(b, dtype=np.float32)
-
     if len(a) != 512 or len(b) != 512:
         return 0.0
 
@@ -26,41 +21,28 @@ def cosine(a, b):
     return float(np.dot(a, b))
 
 
-# ===== FIX EMBEDDING =====
+# ===== FIX EMBEDDING + NHẸ =====
 def get_embedding(file_bytes):
     try:
         res = requests.post(
             API_URL,
-            files={
-                "file": ("image.jpg", file_bytes, "image/jpeg")
-            },
-            timeout=10
+            files={"file": ("img.jpg", file_bytes, "image/jpeg")},
+            timeout=8  # GIẢM TIMEOUT
         )
 
         if res.status_code != 200:
-            print("API ERROR:", res.text)
             return None
 
         data = res.json()
 
-        if "embedding" not in data:
-            print("NO EMBEDDING FIELD:", data)
-            return None
+        emb = data.get("embedding")
 
-        emb = data["embedding"]
-
-        if not emb:
-            print("EMPTY EMBEDDING")
-            return None
-
-        if len(emb) != 512:
-            print("WRONG DIM:", len(emb))
+        if not emb or len(emb) != 512:
             return None
 
         return emb
 
-    except Exception as e:
-        print("ERROR:", e)
+    except Exception:
         return None
 
 
@@ -71,7 +53,13 @@ def recognize_face(file_bytes):
 
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, avg_embedding FROM face_user_vector")
+
+        # LIMIT để tránh nặng
+        cursor.execute("""
+            SELECT user_id, avg_embedding
+            FROM face_user_vector
+            LIMIT 50
+        """)
 
         best_user = None
         best_score = 0
