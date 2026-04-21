@@ -1,0 +1,10 @@
+import os
+
+BUFFALO_API_URL = os.getenv("BUFFALO_API_URL")
+
+DB_HOST = os.getenv("DATABRICKS_HOST")
+DB_TOKEN = os.getenv("DATABRICKS_TOKEN")
+DB_HTTP_PATH = os.getenv("DATABRICKS_HTTP_PATH")
+
+SIM_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", 0.6))
+CACHE_REFRESH = int(os.getenv("CACHE_REFRESH_INTERVAL", 300))
