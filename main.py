@@ -10,6 +10,7 @@ from face_engine import get_embedding, cosine_similarity
 from cache import get_cache, refresh_cache
 from config import SIM_THRESHOLD
 from db import insert_log, get_connection
+from typing import List
 
 app = FastAPI()
 
@@ -98,7 +99,7 @@ def average_embedding(embeddings):
 @app.post("/register-face")
 async def register_face(
     user_code: str = Form(...),
-    files: list[UploadFile] = File(...)
+    files: List[UploadFile] = File(...)
 ):
 
     valid_embeddings = []
