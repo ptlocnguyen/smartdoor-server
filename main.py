@@ -2,7 +2,7 @@
 # SMART DOOR BACKEND - FINAL MAIN
 # =========================================
 
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, Query
 from typing import List
 import time
 import numpy as np
@@ -365,3 +365,43 @@ def get_logs():
         })
 
     return result
+
+@app.delete("/users/delete")
+def delete_user(user_code: str = Query(...)):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Lấy user_id trước
+    cursor.execute(
+        "SELECT user_id FROM smartdoor.core.users WHERE user_code = ?",
+        (user_code,)
+    )
+
+    row = cursor.fetchone()
+
+    if not row:
+        return {"success": False, "message": "user_not_found"}
+
+    user_id = row[0]
+
+    # Xóa face trước (tránh orphan)
+    cursor.execute(
+        "DELETE FROM smartdoor.core.face_profiles WHERE user_id = ?",
+        (user_id,)
+    )
+
+    # Xóa user
+    cursor.execute(
+        "DELETE FROM smartdoor.core.users WHERE user_id = ?",
+        (user_id,)
+    )
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    # refresh cache
+    refresh_cache()
+
+    return {"success": True}
