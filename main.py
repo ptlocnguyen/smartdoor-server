@@ -1,8 +1,9 @@
 # =========================================
-# SMART DOOR BACKEND - MAIN (FINAL)
+# SMART DOOR BACKEND - FINAL MAIN
 # =========================================
 
 from fastapi import FastAPI, UploadFile, File, Form
+from typing import List
 import time
 import numpy as np
 
@@ -10,9 +11,44 @@ from face_engine import get_embedding, cosine_similarity
 from cache import get_cache, refresh_cache
 from config import SIM_THRESHOLD
 from db import insert_log, get_connection
-from typing import List
+
+from fastapi.openapi.utils import get_openapi
 
 app = FastAPI()
+
+
+# =========================================
+# FIX SWAGGER FILE UPLOAD (QUAN TRỌNG)
+# =========================================
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title="SmartDoor API",
+        version="1.0.0",
+        description="API",
+        routes=app.routes,
+    )
+
+    # Ép kiểu file upload
+    try:
+        schema = openapi_schema["paths"]["/register-face"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
+        schema["properties"]["files"] = {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "format": "binary"
+            }
+        }
+    except Exception as e:
+        print("OpenAPI fix error:", e)
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 
 # =========================================
@@ -25,7 +61,7 @@ def startup():
 
 
 # =========================================
-# HEALTH CHECK
+# HEALTH
 # =========================================
 @app.get("/")
 def health():
@@ -33,7 +69,7 @@ def health():
 
 
 # =========================================
-# NHẬN DIỆN KHUÔN MẶT (ESP32)
+# RECOGNIZE FACE (ESP32)
 # =========================================
 @app.post("/recognize")
 async def recognize(file: UploadFile = File(...), device_code: str = "esp32"):
@@ -41,7 +77,6 @@ async def recognize(file: UploadFile = File(...), device_code: str = "esp32"):
     start = time.time()
 
     image = await file.read()
-
     embedding = get_embedding(image)
 
     if embedding is None:
@@ -53,7 +88,11 @@ async def recognize(file: UploadFile = File(...), device_code: str = "esp32"):
     best_score = 0
 
     for user in cache:
+        if len(user["embedding"]) != len(embedding):
+            continue
+
         score = cosine_similarity(embedding, user["embedding"])
+
         if score > best_score:
             best_score = score
             best_user = user
@@ -66,7 +105,6 @@ async def recognize(file: UploadFile = File(...), device_code: str = "esp32"):
             "similarity": float(best_score)
         }
 
-        # ghi log
         insert_log({
             "user_id": best_user["user_id"],
             "user_code": best_user["user_code"],
@@ -87,14 +125,14 @@ async def recognize(file: UploadFile = File(...), device_code: str = "esp32"):
 
 
 # =========================================
-# HÀM TÍNH TRUNG BÌNH EMBEDDING
+# AVERAGE EMBEDDING
 # =========================================
 def average_embedding(embeddings):
-    return np.mean(np.array(embeddings), axis=0).tolist()
+    return np.mean(np.array(embeddings), axis=0)
 
 
 # =========================================
-# API ĐĂNG KÝ KHUÔN MẶT (WEB)
+# REGISTER FACE
 # =========================================
 @app.post("/register-face")
 async def register_face(
@@ -106,41 +144,32 @@ async def register_face(
     failed = 0
 
     # =========================
-    # 1. LẤY EMBEDDING TỪ ẢNH
+    # 1. LẤY EMBEDDING
     # =========================
     for f in files:
         img = await f.read()
         emb = get_embedding(img)
 
-        if emb is None:
+        if emb is None or len(emb) != 512:
             failed += 1
         else:
             valid_embeddings.append(emb)
 
     if len(valid_embeddings) == 0:
-        return {
-            "success": False,
-            "message": "no_face_detected"
-        }
+        return {"success": False, "message": "no_face_detected"}
 
-    # =========================
-    # 2. TÍNH TRUNG BÌNH EMBEDDING MỚI
-    # =========================
     new_embedding = average_embedding(valid_embeddings)
 
-    # =========================
-    # 3. KẾT NỐI DB
-    # =========================
     conn = get_connection()
     cursor = conn.cursor()
 
     # =========================
-    # 4. LẤY USER_ID
+    # 2. LẤY USER_ID (ANTI SQL INJECTION)
     # =========================
-    cursor.execute(f"""
-        SELECT user_id FROM smartdoor.core.users
-        WHERE user_code = '{user_code}'
-    """)
+    cursor.execute(
+        "SELECT user_id FROM smartdoor.core.users WHERE user_code = ?",
+        (user_code,)
+    )
 
     row = cursor.fetchone()
 
@@ -152,13 +181,12 @@ async def register_face(
     user_id = row[0]
 
     # =========================
-    # 5. CHECK EMBEDDING CŨ
+    # 3. LẤY EMBEDDING CŨ
     # =========================
-    cursor.execute(f"""
-        SELECT embedding, sample_count 
-        FROM smartdoor.core.face_profiles
-        WHERE user_id = {user_id}
-    """)
+    cursor.execute(
+        "SELECT embedding, sample_count FROM smartdoor.core.face_profiles WHERE user_id = ?",
+        (user_id,)
+    )
 
     old = cursor.fetchone()
 
@@ -166,22 +194,24 @@ async def register_face(
         old_embedding = np.array(old[0])
         old_count = old[1]
 
-        final_embedding = (
-            (old_embedding * old_count + np.array(new_embedding))
-            / (old_count + 1)
-        ).tolist()
+        total_count = old_count + len(valid_embeddings)
 
-        new_count = old_count + 1
+        final_embedding = (
+            old_embedding * old_count +
+            np.array(new_embedding) * len(valid_embeddings)
+        ) / total_count
+
+        new_count = total_count
 
     else:
-        final_embedding = new_embedding
+        final_embedding = np.array(new_embedding)
         new_count = len(valid_embeddings)
 
-    # =========================
-    # 6. UPSERT EMBEDDING
-    # =========================
-    embedding_str = ",".join(map(str, final_embedding))
+    embedding_str = ",".join(map(str, final_embedding.tolist()))
 
+    # =========================
+    # 4. UPSERT
+    # =========================
     cursor.execute(f"""
         MERGE INTO smartdoor.core.face_profiles AS target
         USING (
@@ -209,12 +239,11 @@ async def register_face(
     """)
 
     conn.commit()
-
     cursor.close()
     conn.close()
 
     # =========================
-    # 7. REFRESH CACHE
+    # 5. REFRESH CACHE
     # =========================
     refresh_cache()
 
@@ -226,7 +255,7 @@ async def register_face(
 
 
 # =========================================
-# REFRESH CACHE THỦ CÔNG
+# REFRESH CACHE
 # =========================================
 @app.post("/refresh-cache")
 def refresh():
